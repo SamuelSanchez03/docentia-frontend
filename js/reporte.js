@@ -97,7 +97,9 @@ function comparativoDepto(reviewsDepto) {
 
 function seleccionarCitas(reviews, materias) {
   // Ejemplos reales según la estrella (no según aspectos); los aspectos y sus citas salen de Aspectos.calcularAspectos.
-  const conTexto = reviews.filter((r) => r.comentario.trim() !== "" && r.student_star !== null);
+  const ofensivo = (typeof FiltroLenguaje !== "undefined") ? FiltroLenguaje.esOfensivo
+    : (typeof require !== "undefined" ? require("./filtro_lenguaje.js").esOfensivo : () => false);
+  const conTexto = reviews.filter((r) => r.comentario.trim() !== "" && r.student_star !== null && !ofensivo(r.comentario)); // A6
   const orden = (a, b) => (b.help_useful || 0) - (a.help_useful || 0) || (b.post_date || "").localeCompare(a.post_date || "");
   const altas = conTexto.filter((r) => r.student_star >= 4).sort(orden).slice(0, 2);
   const bajas = conTexto.filter((r) => r.student_star <= 2).sort(orden).slice(0, 2);
@@ -114,6 +116,27 @@ function seleccionarCitas(reviews, materias) {
   ];
 }
 
+/* ---------- periodo (filtro de fechas por año de post_date) ---------- */
+function aniosDisponibles(reviews) {
+  return [...new Set(reviews.map((r) => r.post_date && r.post_date.slice(0, 4)).filter(Boolean))].sort().map(Number);
+}
+
+/* Devuelve un contexto con las reviews del profesor y del departamento dentro de [desde, hasta] (años, inclusivo).
+   Con el rango completo devuelve el contexto tal cual (incluye las pocas reviews sin fecha). Los aspectos no se
+   tocan: calcularAspectos los cruza con las reviews que quedan. */
+function filtrarPorPeriodo(ctx, desde, hasta) {
+  const anios = aniosDisponibles(ctx.reviews);
+  if (!anios.length || desde == null || hasta == null || (desde <= anios[0] && hasta >= anios[anios.length - 1])) {
+    return Object.assign({}, ctx, { periodoFiltro: null });
+  }
+  const dentro = (r) => { const a = r.post_date ? Number(r.post_date.slice(0, 4)) : null; return a !== null && a >= desde && a <= hasta; };
+  return Object.assign({}, ctx, {
+    reviews: ctx.reviews.filter(dentro),
+    reviewsDepto: ctx.reviewsDepto.filter(dentro),
+    periodoFiltro: { desde, hasta, min: anios[0], max: anios[anios.length - 1] }
+  });
+}
+
 function calcularReporte(ctx) {
   const { profesor, reviews, materias, reviewsDepto } = ctx;
   const n = reviews.length;
@@ -123,7 +146,7 @@ function calcularReporte(ctx) {
   return {
     n,
     nComentarios: reviews.filter((r) => r.comentario.trim() !== "").length,
-    periodo: { min: fechas[0] || null, max: fechas[fechas.length - 1] || null },
+    periodo: { min: fechas[0] || null, max: fechas[fechas.length - 1] || null, filtro: ctx.periodoFiltro || null },
     semaforo: semaforo(n),
     mediaStar: media(reviews.map((r) => r.student_star)),
     mediaDif: media(reviews.map((r) => r.student_difficult)),
@@ -142,4 +165,4 @@ function calcularReporte(ctx) {
   };
 }
 
-if (typeof module !== "undefined") module.exports = { calcularReporte, media, semaforo, recortar, tagsDelProfesor };
+if (typeof module !== "undefined") module.exports = { calcularReporte, media, semaforo, recortar, tagsDelProfesor, aniosDisponibles, filtrarPorPeriodo, seleccionarCitas };

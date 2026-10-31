@@ -30,6 +30,16 @@
     return !PLACEHOLDERS.includes(c.trim().replace(/^[.! ]+|[.! ]+$/g, '').toLowerCase());
   }
 
+  // Los 9 aspectos en el orden del PRD (para el detalle, aunque alguno no tenga menciones).
+  const ASPECTOS_CANONICOS = ['Calidad de clase', 'Accesibilidad y trato', 'Clima de aula', 'Rigor de calificación',
+    'Carga de trabajo', 'Claridad de evaluación', 'Organización / proyectos', 'Retroalimentación', 'Asistencia / formato'];
+
+  function getFiltro() {
+    if (root.FiltroLenguaje) return root.FiltroLenguaje;
+    if (typeof require !== 'undefined') return require('./filtro_lenguaje.js');
+    return { esOfensivo: function () { return false; } };
+  }
+
   function getCatalogo() {
     if (root.Catalogo) return root.Catalogo;
     if (typeof require !== 'undefined') return require('./catalogo.js');
@@ -61,6 +71,14 @@
      PREC_MIN_VISIBLE de las veces que marca ese aspecto como positivo (con N_MIN_PREC predicciones o más); una
      oportunidad, lo mismo con el negativo. Si el modelo no trae precisión por signo, se usa el piso de F1 anterior.
      Sin métricas (modelo sin medir) no se filtra. */
+  // {prec, n} del signo de la tarjeta (o null si el modelo no trae precisión por signo).
+  function precisionSigno(modelo, aspecto, tipo) {
+    const m = metricasDeAspecto(modelo, aspecto);
+    const clave = tipo === 'fortaleza' ? 'pos' : 'neg';
+    if (!m || !(('prec_' + clave) in m)) return null;
+    return { prec: m['prec_' + clave], n: m['n_pred_' + clave] || 0 };
+  }
+
   function tarjetaPermitida(modelo, aspecto, tipo, cfg) {
     const m = metricasDeAspecto(modelo, aspecto);
     const clave = tipo === 'fortaleza' ? 'pos' : 'neg';
@@ -76,6 +94,10 @@
     let cand = filas
       .filter(function (a) { return a.aspecto === aspecto && a.polaridad === polaridad && a.evidencia; })
       .map(function (a) { return { ev: a.evidencia, r: porId.get(a.review_id) }; });
+    const filtroLenguaje = getFiltro();
+    const antes = cand.length;
+    cand = cand.filter(function (c) { return !filtroLenguaje.esOfensivo(c.ev); });   // A6: nunca se cita lenguaje ofensivo
+    const omitidas = antes - cand.length;
     if (filtro) {                                              // cita que respalda el diagnóstico, si la hay
       const conDiag = cand.filter(function (c) { return filtro(c.ev); });
       if (conDiag.length) cand = conDiag;
@@ -88,7 +110,8 @@
           || (x.r.review_id - y.r.review_id);                  // desempate estable
     });
     const c = cand[0];
-    return c ? { texto: c.ev, fecha: c.r.post_date || null, estrellas: c.r.student_star != null ? c.r.student_star : null } : null;
+    if (!c) return omitidas ? { texto: null, omitida: true } : null;
+    return { texto: c.ev, fecha: c.r.post_date || null, estrellas: c.r.student_star != null ? c.r.student_star : null };
   }
 
   function calcularAspectos(reviews, aspectos, modelo, cfg) {
@@ -124,7 +147,10 @@
         : (x.n_neg > x.n_pos && x.n_neg >= cfg.MIN_N_DIRECCION) ? 'oportunidad' : null; // todo neutro => ninguna de las dos
       const visible = tipo ? tarjetaPermitida(modelo, x.aspecto, tipo, cfg) : (f1 == null || f1 >= cfg.F1_MIN_VISIBLE); // I1.5
       const den = x.n_pos + x.n_neg;
+      const motivo = !cumple ? 'pocas_menciones' : !tipo ? 'sin_predominio' : !visible ? 'confiabilidad' : 'tarjeta';
       const item = Object.assign({}, x, { f1: f1, cumple_umbral: cumple, clasificacion: tipo, en_top_permitido: visible,
+        motivo: motivo, precision_signo: tipo && precisionSigno(modelo, x.aspecto, tipo)
+          ? Object.assign(precisionSigno(modelo, x.aspecto, tipo), { n_min: cfg.N_MIN_PREC, prec_min: cfg.PREC_MIN_VISIBLE }) : null,
         pct_pos: den ? x.n_pos / den : 0, pct_neg: den ? x.n_neg / den : 0 });
       detalle.push(item);
       if (tipo && visible) (tipo === 'fortaleza' ? fort : opor).push(item);
@@ -134,7 +160,12 @@
       return function (a, b) { return (b[clave] - a[clave]) || (b.n_menciones - a.n_menciones) || a.aspecto.localeCompare(b.aspecto, 'es'); };
     };
     fort.sort(cmp('n_pos')); opor.sort(cmp('n_neg'));
-    detalle.sort(function (a, b) { return a.aspecto.localeCompare(b.aspecto, 'es'); });
+    fort.slice(cfg.TOP_N).concat(opor.slice(cfg.TOP_N)).forEach(function (x) { x.motivo = 'fuera_top'; });   // calificaba, pero no cupo en el top
+    ASPECTOS_CANONICOS.forEach(function (a) {                  // los 9 en el detalle, aunque no tengan menciones
+      if (!acum.has(a)) detalle.push({ aspecto: a, n_menciones: 0, n_pos: 0, n_neg: 0, f1: f1DeAspecto(modelo, a), cumple_umbral: false,
+        clasificacion: null, en_top_permitido: false, motivo: 'sin_menciones', precision_signo: null, pct_pos: 0, pct_neg: 0 });
+    });
+    detalle.sort(function (a, b) { return (b.n_menciones - a.n_menciones) || (ASPECTOS_CANONICOS.indexOf(a.aspecto) - ASPECTOS_CANONICOS.indexOf(b.aspecto)); });
 
     const fortalezas = fort.slice(0, cfg.TOP_N).map(function (x) {
       return Object.assign({}, x, { polaridad_tarjeta: 'positivo', cita: elegirCita(x.aspecto, 'positivo', filas, porId, cfg), accion: null });
@@ -165,7 +196,7 @@
   }
 
   const api = { CONFIG_ASPECTOS: CONFIG_ASPECTOS, calcularAspectos: calcularAspectos, esTextoValido: esTextoValido, f1DeAspecto: f1DeAspecto,
-                tarjetaPermitida: tarjetaPermitida };
+                tarjetaPermitida: tarjetaPermitida, ASPECTOS_CANONICOS: ASPECTOS_CANONICOS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Aspectos = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -242,4 +242,77 @@ t('La tarjeta de oportunidad muestra diagnóstico con conteos y escapa el texto'
   assert.ok(html.includes('&lt;b&gt;reading') && !html.includes('<b>reading'));
 });
 
+console.log('Filtro de lenguaje en citas (A6)');
+const { esOfensivo, motivoOfensivo } = require('./filtro_lenguaje.js');
+t('Detecta cada categoría y no marca usos comunes', () => {
+  assert.strictEqual(motivoOfensivo('This class is fucking hard'), 'groserias');
+  assert.strictEqual(motivoOfensivo('Knows her**** but is really hard'), 'censurado');
+  assert.strictEqual(motivoOfensivo('He is an idiot'), 'insultos');
+  assert.strictEqual(motivoOfensivo('Nice guy if you like Hitler'), 'odio');
+  assert.strictEqual(motivoOfensivo('She is so hot'), 'apariencia');
+  assert.strictEqual(motivoOfensivo('Hard to understand his accent'), 'origen');
+  ['No question is stupid, he says.', 'Great lectures and fair tests.', 'Shows examples of carpentry.', 'The hottest topics in physics'].forEach((x) => assert.ok(!esOfensivo(x), x));
+});
+t('La tarjeta nunca cita un comentario ofensivo; si todos lo son, la cita se marca como omitida', () => {
+  const rev = mkReviews(10, i => ({ post_date: '2017-01-0' + (i + 1) }));
+  const asp = [mkAsp(9, 'Calidad de clase', 'positivo', 'He is an idiot but his lectures are really amazing overall.'),
+               mkAsp(1, 'Calidad de clase', 'positivo'), mkAsp(2, 'Calidad de clase', 'positivo')];
+  assert.ok(!/idiot/.test(calcularAspectos(rev, asp, modeloOk).fortalezas[0].cita.texto));   // la más reciente era la ofensiva
+  const solo = [3, 4, 5].map(r => mkAsp(r, 'Calidad de clase', 'positivo', 'Sexy professor, great lectures every single time we met.'));
+  const c = calcularAspectos(rev, solo, modeloOk).fortalezas[0].cita;
+  assert.deepStrictEqual(c, { texto: null, omitida: true });
+  assert.ok(require('./aspectos_vista.js').htmlFranjaAspectos({ estado: 'validado', umbral: 3, fortalezas: [{ aspecto: 'Calidad de clase', n_menciones: 3, n_pos: 3, n_neg: 0, cita: c }], oportunidades: [] }).includes('Cita omitida'));
+});
+t('«Comentarios de ejemplo» también excluye lenguaje ofensivo', () => {
+  global.CONFIG = { MAX_CITA: 280 };
+  const { seleccionarCitas } = require('./reporte.js');
+  const rev = [{ comentario: 'Total bullshit class', student_star: 1, post_date: '2017-01-02', materia_id: null },
+               { comentario: 'Really unfair grading all semester', student_star: 1, post_date: '2017-01-01', materia_id: null }];
+  assert.deepStrictEqual(seleccionarCitas(rev, {}).map(c => c.texto), ['Really unfair grading all semester']);
+});
+
+console.log('Detalle de los 9 aspectos');
+t('Siempre 9 filas, ordenadas por menciones, con el motivo correcto', () => {
+  const asp = [].concat(filasDe('Calidad de clase', 6, 0, 0, 1), filasDe('Rigor de calificación', 0, 0, 5, 1),
+    filasDe('Carga de trabajo', 0, 4, 0, 1), filasDe('Clima de aula', 2, 0, 0, 1), filasDe('Accesibilidad y trato', 5, 0, 0, 1),
+    filasDe('Claridad de evaluación', 4, 0, 0, 1), filasDe('Retroalimentación', 4, 0, 0, 1));
+  const r = calcularAspectos(mkReviews(20), asp, modeloC);
+  assert.strictEqual(r.detalle.length, 9);
+  const m = Object.fromEntries(r.detalle.map(d => [d.aspecto, d.motivo]));
+  assert.strictEqual(m['Calidad de clase'], 'tarjeta');
+  assert.strictEqual(m['Rigor de calificación'], 'sin_predominio');
+  assert.strictEqual(m['Carga de trabajo'], 'tarjeta');
+  assert.strictEqual(m['Clima de aula'], 'pocas_menciones');
+  assert.strictEqual(m['Asistencia / formato'], 'sin_menciones');
+  assert.strictEqual(r.detalle[0].aspecto, 'Calidad de clase');
+  // Accesibilidad, Claridad y Retroalimentación no tienen precisión en modeloC: rige F1 (nulo) y compiten por el top 3
+  assert.strictEqual(r.fortalezas.length, 3);
+  assert.ok(Object.values(m).includes('fuera_top'));
+});
+t('Motivo «confiabilidad» con la precisión real del signo', () => {
+  const r = calcularAspectos(mkReviews(20), filasDe('Rigor de calificación', 5, 0, 0, 1), modeloC);
+  const d = r.detalle.find(x => x.aspecto === 'Rigor de calificación');
+  assert.strictEqual(d.motivo, 'confiabilidad');
+  assert.deepStrictEqual(d.precision_signo, { prec: 0.25, n: 8, n_min: 10, prec_min: 0.6 });
+  const html = require('./aspectos_vista.js').htmlDetalleAspectos(r);
+  assert.ok(html.includes('Los 9 aspectos') && html.includes('solo 8 veces: muy pocas'));
+  const m2 = { estado: 'en_calibracion', f1_micro: 0.6, f1_por_aspecto: { 'Rigor de calificación': { prec_pos: 0.25, n_pred_pos: 40 } } };
+  assert.ok(require('./aspectos_vista.js').htmlDetalleAspectos(calcularAspectos(mkReviews(20), filasDe('Rigor de calificación', 5, 0, 0, 1), m2)).includes('acertó 25 % de las 40 veces'));
+});
+
+console.log('Filtro de periodo');
+const { aniosDisponibles, filtrarPorPeriodo } = require('./reporte.js');
+t('Años disponibles, filtro inclusivo y departamento con el mismo filtro', () => {
+  const rv = (id, f, p) => ({ review_id: id, post_date: f, profesor_id: p || 1 });
+  const ctx = { reviews: [rv(1, '2012-03-01'), rv(2, '2015-05-01'), rv(3, '2018-01-01'), rv(4, null)],
+                reviewsDepto: [rv(10, '2011-01-01', 2), rv(11, '2016-01-01', 2)] };
+  assert.deepStrictEqual(aniosDisponibles(ctx.reviews), [2012, 2015, 2018]);
+  const full = filtrarPorPeriodo(ctx, 2012, 2018);
+  assert.strictEqual(full.reviews.length, 4); assert.strictEqual(full.periodoFiltro, null);   // rango completo: incluye la sin fecha
+  const f = filtrarPorPeriodo(ctx, 2015, 2018);
+  assert.deepStrictEqual(f.reviews.map(r => r.review_id), [2, 3]);
+  assert.deepStrictEqual(f.reviewsDepto.map(r => r.review_id), [11]);
+  assert.deepStrictEqual(f.periodoFiltro, { desde: 2015, hasta: 2018, min: 2012, max: 2018 });
+});
+
 console.log('\n' + n + ' pruebas ejecutadas' + (process.exitCode ? ' — CON FALLAS' : ' — todas pasan'));

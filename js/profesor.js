@@ -1,6 +1,6 @@
 /* js/profesor.js
  * Pinta la vista del profesor. Requiere (en este orden): PapaParse, Chart.js,
- * js/datos.js, js/reporte.js, js/catalogo.js, js/aspectos_logica.js, js/aspectos_vista.js y luego este archivo.
+ * js/datos.js, js/reporte.js, js/filtro_lenguaje.js, js/catalogo.js, js/aspectos_logica.js, js/aspectos_vista.js y luego este archivo.
  * Espera los ids definidos en index.html.
  */
 const $ = (id) => document.getElementById(id);
@@ -48,11 +48,14 @@ function marco(titulo, subtitulo, cuerpo) {
 }
 
 function htmlEncabezado(ctx, rep) {
-  const per = rep.periodo.min ? `${rep.periodo.min} a ${rep.periodo.max}` : "sin fechas";
+  const fp = rep.periodo.filtro;
+  const per = rep.periodo.min ? `${rep.periodo.min} a ${rep.periodo.max}` : (fp ? "sin evaluaciones en este periodo" : "sin fechas");
+  const nota = fp ? `<p class="text-sm text-ink-muted">Filtrado ${fp.desde === fp.hasta ? fp.desde : fp.desde + "–" + fp.hasta} · datos disponibles ${fp.min}–${fp.max}</p>` : "";
   return `<header>
     <h1 class="font-display text-4xl sm:text-5xl">${esc(ctx.profesor.nombre)}</h1>
     <p class="text-ink-muted mt-2">${esc(ctx.escuela.nombre)} · ${esc(ctx.departamento.nombre)}</p>
     <p class="text-ink-muted">Periodo ${esc(per)}</p>
+    ${nota}
     <p class="mt-4 inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold ${SEMAFORO[rep.semaforo.nivel]}">${esc(rep.semaforo.etiqueta)}</p>
     <p class="text-sm text-ink-muted mt-2">${esc(rep.semaforo.nota)}</p>
   </header>`;
@@ -135,6 +138,35 @@ function htmlFranjaAspectos(rep) {
   return html || htmlFranjaNlp();
 }
 
+/* «Cómo se calculó»: explicación en lenguaje simple, con los valores del modelo y la configuración activos. */
+function htmlComoSeCalculo(ctx, rep) {
+  const m = ctx.modelo;
+  const A = window.Aspectos;
+  const cfgA = A ? A.CONFIG_ASPECTOS : {};
+  const lista = (tipo) => (A && m) ? A.ASPECTOS_CANONICOS.filter((a) => A.tarjetaPermitida(m, a, tipo, cfgA)) : [];
+  const unir = (xs) => xs.length ? xs.join(", ") : "ninguno";
+  const f1 = m && Number.isFinite(m.f1_micro) ? m.f1_micro.toFixed(2) : null;
+  const fp = rep.periodo.filtro;
+  const items = [
+    ["De dónde salen los datos", `Evaluaciones públicas de Rate My Professors (muestra de 19,971 evaluaciones). Este reporte usa las ${rep.n} evaluaciones de este profesor${fp ? ` publicadas entre ${fp.desde} y ${fp.hasta}` : ""}. No se usa ninguna variable demográfica.`],
+    ["Indicadores", `Calidad: media de la puntuación que dio cada alumno (1 a 5). Dificultad: media de la dificultad que percibió. Retorno: porcentaje de quienes respondieron que sí volverían a tomar la clase (solo cuentan quienes respondieron). El comparativo de departamento usa a los profesores con al menos ${CONFIG.MIN_EVAL_PROF_EN_DEPTO} evaluaciones en el mismo periodo y se oculta si reúne menos de ${CONFIG.MIN_EVAL_DEPTO}.`],
+    ["Nivel de evidencia", `Menos de ${CONFIG.N_ROJO} evaluaciones: no se emiten juicios. De ${CONFIG.N_ROJO} a ${CONFIG.N_VERDE - 1}: muestra pequeña, interpretar con cautela. ${CONFIG.N_VERDE} o más: reporte completo.`],
+    ["Fortalezas y áreas de oportunidad", `Un modelo de lenguaje${m ? ` (${m.version_modelo})` : ""} lee cada comentario y detecta de cuál de 9 aspectos habla y si lo dice de forma positiva, negativa o neutra; las estrellas no intervienen. Un aspecto se considera cuando reúne al menos ${rep.aspectos && rep.aspectos.umbral != null ? rep.aspectos.umbral : cfgA.MIN_MENCIONES} menciones (${cfgA.MIN_MENCIONES} o el ${Math.round((cfgA.MIN_PCT_MENCIONES || 0) * 100)} % de los comentarios, lo que sea mayor). Es fortaleza si predominan las menciones positivas y área de oportunidad si predominan las negativas. Se muestran hasta ${cfgA.TOP_N} de cada una.`],
+    ["Qué tan confiable es el modelo", (f1 ? `Comparado con ${m.n_gold || 300} comentarios anotados a mano que el modelo nunca vio, acierta el aspecto y su signo con un F1 de ${f1} (1 sería perfecto). Dos personas que anotan los mismos comentarios coinciden alrededor de 0.70, que es el techo realista; por eso el reporte dice «Modelo en calibración». ` : "El modelo todavía no tiene una medición publicada. ") +
+      `Además, una tarjeta solo aparece cuando el modelo acierta al menos el ${Math.round((cfgA.PREC_MIN_VISIBLE || 0) * 100)} % de las veces que marca ese aspecto con ese signo. Con el modelo actual pueden ser fortaleza: ${unir(lista("fortaleza"))}; y área de oportunidad: ${unir(lista("oportunidad"))}. Los demás se ven en «Los 9 aspectos».`],
+    ["Rigor", "Que una clase sea difícil o exigente no cuenta como algo negativo. Solo contaría si el alumno dice que la forma de calificar es injusta o arbitraria."],
+    ["Diagnóstico y acción sugerida", "El diagnóstico se elige buscando palabras clave en los comentarios negativos de ese aspecto (por ejemplo, «reading» o «chapters» para el volumen de lectura); el número entre paréntesis es un conteo real. La acción sale de un catálogo escrito de antemano: no la redacta una inteligencia artificial y no afirma nada que no salga de los comentarios."],
+    ["Citas", "Son textos originales en inglés, sin traducir. No se citan comentarios con groserías, insultos, lenguaje de odio o comentarios sobre la apariencia, el acento o el origen de la persona; esos comentarios sí cuentan en los conteos."],
+    ["Qué no es este reporte", "No es un dictamen laboral ni una evaluación institucional: son opiniones voluntarias de una plataforma pública, donde abundan las opiniones muy buenas y muy malas."]
+  ];
+  return `<details class="group rounded-[40px] border border-hairline p-8 mt-8">
+    <summary class="cursor-pointer list-none flex items-center justify-between gap-4">
+      <h2 class="font-display text-2xl">Cómo se calculó este reporte</h2>
+      <span class="material-symbols-outlined text-ink-muted transition-transform group-open:rotate-180">expand_more</span></summary>
+    <dl class="mt-5 space-y-4">${items.map(([t, d]) => `<div><dt class="font-semibold">${esc(t)}</dt><dd class="text-sm text-ink-muted mt-1">${esc(d)}</dd></div>`).join("")}</dl>
+  </details>`;
+}
+
 const VISTAS = {
   dist: { nombre: "Distribución de puntuaciones", html: () => marco("Distribución de puntuaciones", "Número de evaluaciones por puntuación (student_star).", `<div class="h-56"><canvas id="chDist"></canvas></div>`) },
   evol: { nombre: "Evolución por año", html: () => marco("Evolución por año", "Media por año de publicación; el número en cada punto es el tamaño de muestra.", `<div class="h-56"><canvas id="chEvol"></canvas></div>`) },
@@ -152,12 +184,12 @@ function montarPaneles(rep) {
   $("paneles").innerHTML = panelVista.map((k, i) => `<section class="flex flex-col h-[460px] rounded-[40px] border border-hairline px-8 pt-6 pb-8">
     <div class="flex justify-end mb-3 shrink-0">${selector(i)}</div>
     <div class="panel-scroll flex-1 min-h-0 overflow-y-auto pr-2 -mr-2">${VISTAS[k].html(rep)}</div></section>`).join("");
-  $("paneles").addEventListener("change", (e) => {
+  $("paneles").onchange = (e) => {
     const i = Number(e.target.dataset.panel), nueva = e.target.value, otro = 1 - i;
     if (panelVista[otro] === nueva) panelVista[otro] = panelVista[i]; // una vista no puede estar en dos celdas
     panelVista[i] = nueva;
     montarPaneles(rep);
-  });
+  };
   dibujarGraficas(rep);
 }
 
@@ -170,10 +202,12 @@ function mostrarReporte(ctx, rep) {
   charts.splice(0).forEach((c) => c.destroy());
   const cont = $("reporte");
   if (rep.semaforo.nivel === "rojo") {
-    cont.innerHTML = cabecera(ctx, rep, false);
+    cont.innerHTML = cabecera(ctx, rep, false) + htmlComoSeCalculo(ctx, rep);
     return;
   }
-  cont.innerHTML = cabecera(ctx, rep, true) + htmlFranjaAspectos(rep) + `<div id="paneles" class="grid grid-cols-1 lg:grid-cols-2 gap-6"></div>`;
+  const detalle = (window.AspectosVista && AspectosVista.htmlDetalleAspectos) ? AspectosVista.htmlDetalleAspectos(rep.aspectos) : "";
+  cont.innerHTML = cabecera(ctx, rep, true) + htmlFranjaAspectos(rep) + detalle +
+    `<div id="paneles" class="grid grid-cols-1 lg:grid-cols-2 gap-6"></div>` + htmlComoSeCalculo(ctx, rep);
   montarPaneles(rep);
 }
 
@@ -206,14 +240,56 @@ function mostrarError(e) {
     <p class="font-semibold">No se pudieron cargar los datos</p><p class="text-sm mt-1">${esc(e.message)}</p></div>`;
 }
 
+/* ---------- estado: profesor cargado y periodo elegido ---------- */
+let actual = null;                                   // { id, ctx } del profesor cargado (sin filtrar)
+const periodo = { desde: null, hasta: null };
+let paramsIniciales = new URLSearchParams(location.search);   // ?desde=&hasta= solo se respetan en la primera carga
+
+function llenarPeriodo(anios) {
+  const opciones = anios.map((a) => `<option value="${a}">${a}</option>`).join("");
+  $("selDesde").innerHTML = opciones;
+  $("selHasta").innerHTML = opciones;
+  $("selDesde").disabled = $("selHasta").disabled = anios.length < 2;
+  if (anios.length) { $("selDesde").value = String(periodo.desde); $("selHasta").value = String(periodo.hasta); }
+}
+
+function mostrarActual() {
+  const ctx = filtrarPorPeriodo(actual.ctx, periodo.desde, periodo.hasta);
+  mostrarReporte(ctx, calcularReporte(ctx));
+  const q = new URLSearchParams({ prof: actual.id });
+  if (ctx.periodoFiltro) { q.set("desde", periodo.desde); q.set("hasta", periodo.hasta); }
+  history.replaceState(null, "", "?" + q);
+}
+
 async function cargarProfesor(profesorId) {
   $("reporte").innerHTML = `<p class="text-ink-muted">Cargando…</p>`;
   try {
     const ctx = await fuente.cargarContextoProfesor(profesorId);
-    mostrarReporte(ctx, calcularReporte(ctx));
-    history.replaceState(null, "", "?prof=" + profesorId);
+    actual = { id: profesorId, ctx };
+    const anios = aniosDisponibles(ctx.reviews);     // al cambiar de profesor, el periodo vuelve al rango completo
+    periodo.desde = anios.length ? anios[0] : null;
+    periodo.hasta = anios.length ? anios[anios.length - 1] : null;
+    if (paramsIniciales) {
+      const d = Number(paramsIniciales.get("desde")), h = Number(paramsIniciales.get("hasta"));
+      if (anios.includes(d)) periodo.desde = d;
+      if (anios.includes(h)) periodo.hasta = h;
+      if (periodo.desde > periodo.hasta) [periodo.desde, periodo.hasta] = [periodo.hasta, periodo.desde];
+      paramsIniciales = null;
+    }
+    llenarPeriodo(anios);
+    mostrarActual();
     $("fuenteDatos").textContent = CONFIG.FUENTE === "local" ? "CSV locales" : CONFIG.FUENTE;
   } catch (e) { mostrarError(e); }
+}
+
+function cambiarPeriodo(cual, valor) {
+  if (!actual) return;
+  periodo[cual] = Number(valor);
+  if (periodo.desde > periodo.hasta) {             // nunca un rango invertido: se mueve el otro extremo
+    if (cual === "desde") periodo.hasta = periodo.desde; else periodo.desde = periodo.hasta;
+    $("selDesde").value = String(periodo.desde); $("selHasta").value = String(periodo.hasta);
+  }
+  mostrarActual();
 }
 
 async function llenarProfesores(escuelaId, profesorIdElegido) {
@@ -240,6 +316,8 @@ async function iniciar() {
     await llenarProfesores(escuelaId, profParam ? Number(profParam) : undefined);
     $("selEscuela").addEventListener("change", (e) => llenarProfesores(e.target.value));
     $("selProfesor").addEventListener("change", (e) => cargarProfesor(e.target.value));
+    $("selDesde").addEventListener("change", (e) => cambiarPeriodo("desde", e.target.value));
+    $("selHasta").addEventListener("change", (e) => cambiarPeriodo("hasta", e.target.value));
   } catch (e) { mostrarError(e); }
 }
 

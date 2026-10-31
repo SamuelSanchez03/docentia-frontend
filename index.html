@@ -29,12 +29,18 @@ tailwind.config = { theme: { extend: {
 </head>
 <body class="bg-canvas text-ink font-body antialiased min-h-screen flex flex-col">
   <header class="no-print border-b border-hairline">
-    <div class="max-w-[1180px] mx-auto px-6 py-4 grid grid-cols-1 md:grid-cols-[auto_1fr_1fr] items-end gap-6">
+    <div class="max-w-[1180px] mx-auto px-6 py-4 grid grid-cols-1 md:grid-cols-[auto_1fr_1fr_auto] items-end gap-6">
       <span class="font-display text-3xl text-primary">Docentia</span>
       <label class="text-sm text-ink-muted">Institución
         <select id="selEscuela" class="block mt-1 w-full rounded-lg border-hairline text-sm text-ink"></select></label>
       <label class="text-sm text-ink-muted">Profesor
         <select id="selProfesor" class="block mt-1 w-full rounded-lg border-hairline text-sm text-ink"></select></label>
+      <div class="text-sm text-ink-muted">Periodo
+        <div class="flex items-center gap-2 mt-1">
+          <select id="selDesde" aria-label="Desde el año" class="rounded-lg border-hairline text-sm text-ink"></select>
+          <span>a</span>
+          <select id="selHasta" aria-label="Hasta el año" class="rounded-lg border-hairline text-sm text-ink"></select>
+        </div></div>
     </div>
   </header>
   <main class="flex-1 w-full max-w-[1180px] mx-auto px-6 py-10">
@@ -45,11 +51,12 @@ tailwind.config = { theme: { extend: {
       Fuente: evaluaciones de Rate My Professors (muestra) · <span id="fuenteDatos">—</span> · Sin variables demográficas · Este reporte no es un dictamen laboral.
     </p>
   </footer>
-  <script src="js/datos.js"></script>
-  <script src="js/reporte.js"></script>
-  <script src="js/catalogo.js"></script>
-  <script src="js/aspectos_logica.js"></script>
-  <script src="js/aspectos_vista.js"></script>
-  <script src="js/profesor.js"></script>
+  <script src="js/datos.js?v=2026-10-31"></script>
+  <script src="js/reporte.js?v=2026-10-31"></script>
+  <script src="js/filtro_lenguaje.js?v=2026-10-31"></script>
+  <script src="js/catalogo.js?v=2026-10-31"></script>
+  <script src="js/aspectos_logica.js?v=2026-10-31"></script>
+  <script src="js/aspectos_vista.js?v=2026-10-31"></script>
+  <script src="js/profesor.js?v=2026-10-31"></script>
 </body>
 </html>

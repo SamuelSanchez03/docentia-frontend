@@ -23,7 +23,9 @@
         plural(c.n_pos, 'positiva', 'positivas') + ', ' + plural(c.n_neg, 'negativa', 'negativas') + ', ' + plural(neutras, 'neutra', 'neutras') + '">' +
         '<div class="bg-theme-forest" style="width:' + pct(c.n_pos, c.n_menciones) + '%"></div>' +
         '<div class="bg-ambar" style="width:' + pct(c.n_neg, c.n_menciones) + '%"></div></div>';
-    const cita = c.cita
+    const cita = (c.cita && c.cita.omitida)
+      ? '<p class="mt-3 text-xs text-ink-muted italic">Cita omitida: los comentarios de este aspecto contienen lenguaje ofensivo o comentarios sobre la persona.</p>'
+      : c.cita
       ? '<figure class="mt-3"><blockquote class="text-sm leading-relaxed">“' + escHtml(c.cita.texto) + '”</blockquote>' +
         '<figcaption class="text-xs text-ink-muted mt-1">' +
           (c.cita.estrellas != null ? Number(c.cita.estrellas).toFixed(1) + ' de 5' : '') +
@@ -66,7 +68,61 @@
       'Esto no es un dictamen laboral.</p></div>';
   }
 
-  const api = { htmlFranjaAspectos: htmlFranjaAspectos, escHtml: escHtml };
+  /* Detalle de los 9 aspectos: todas las menciones del periodo, lleguen o no a tarjeta, y por qué. */
+  const pctTxt = function (v) { return Math.round(v * 100) + ' %'; };
+  function estadoDetalle(d, umbral) {
+    const tipo = d.clasificacion === 'fortaleza' ? 'fortaleza' : 'oportunidad';
+    switch (d.motivo) {
+      case 'tarjeta': return { txt: d.clasificacion === 'fortaleza' ? 'Fortaleza' : 'Área de oportunidad',
+        cls: d.clasificacion === 'fortaleza' ? 'bg-theme-forest/10 text-theme-forest' : 'bg-ambar/15 text-ambar' };
+      case 'fuera_top': return { txt: (tipo === 'fortaleza' ? 'Fortaleza' : 'Oportunidad') + ' fuera del top 3', cls: 'bg-surface-1 text-ink' };
+      case 'confiabilidad': {
+        const p = d.precision_signo;
+        const signo = tipo === 'fortaleza' ? 'positivo' : 'negativo';
+        return { txt: 'Sin tarjeta: confiabilidad baja', cls: 'bg-surface-1 text-ink-muted',
+          nota: !p ? 'El modelo no alcanzó el F1 mínimo en este aspecto.'
+            : (p.n_min != null && p.n < p.n_min)
+              ? 'Al evaluarlo, el modelo marcó este aspecto como ' + signo + ' solo ' + plural(p.n, 'vez', 'veces') + ': muy pocas para saber si es confiable (se piden al menos ' + p.n_min + ').'
+              : 'Al evaluarlo, el modelo acertó ' + pctTxt(p.prec || 0) + ' de las ' + p.n + ' veces que marcó este aspecto como ' + signo + ' (se pide al menos ' + pctTxt(p.prec_min != null ? p.prec_min : 0.6) + ').' };
+      }
+      case 'sin_predominio': return { txt: 'Sin predominio', cls: 'bg-surface-1 text-ink-muted', nota: 'Las menciones son neutras o no hay predominio de un signo.' };
+      case 'pocas_menciones': return { txt: 'Pocas menciones', cls: 'bg-surface-1 text-ink-muted', nota: 'Se requieren al menos ' + umbral + ' menciones.' };
+      default: return { txt: 'Sin menciones', cls: 'bg-surface-1 text-ink-muted' };
+    }
+  }
+
+  function htmlDetalleAspectos(res) {
+    if (!res || res.estado === 'sin_modelo' || !res.detalle) return '';
+    const filas = res.detalle.map(function (d) {
+      const neu = d.n_menciones - d.n_pos - d.n_neg;
+      const e = estadoDetalle(d, res.umbral);
+      const barra = d.n_menciones
+        ? '<div class="flex h-3 w-full overflow-hidden rounded-full bg-hairline" role="img" aria-label="' +
+            plural(d.n_pos, 'positiva', 'positivas') + ', ' + plural(neu, 'neutra', 'neutras') + ', ' + plural(d.n_neg, 'negativa', 'negativas') + '">' +
+            '<div class="bg-theme-forest" style="width:' + pct(d.n_pos, d.n_menciones) + '%"></div>' +
+            '<div class="bg-ink/20" style="width:' + pct(neu, d.n_menciones) + '%"></div>' +
+            '<div class="bg-ambar" style="width:' + pct(d.n_neg, d.n_menciones) + '%"></div></div>'
+        : '<div class="h-3 w-full rounded-full border border-dashed border-hairline"></div>';
+      return '<div class="grid grid-cols-1 sm:grid-cols-[12rem_1fr_14rem] gap-x-4 gap-y-1 items-center py-3 border-t border-hairline first:border-0">' +
+        '<div class="font-semibold text-sm">' + escHtml(d.aspecto) + '</div>' +
+        '<div>' + barra + '<div class="text-xs text-ink-muted mt-1">' + plural(d.n_menciones, 'mención', 'menciones') +
+          (d.n_menciones ? ' · ' + plural(d.n_pos, 'positiva', 'positivas') + ' · ' + plural(neu, 'neutra', 'neutras') + ' · ' + plural(d.n_neg, 'negativa', 'negativas') : '') + '</div></div>' +
+        '<div class="sm:text-right"><span class="inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ' + e.cls + '">' + escHtml(e.txt) + '</span></div>' +
+        (e.nota ? '<p class="sm:col-start-2 sm:col-span-2 text-xs text-ink-muted">' + escHtml(e.nota) + '</p>' : '') +
+      '</div>';
+    }).join('');
+    return '<section class="rounded-[40px] border border-hairline p-8 mb-8">' +
+      '<h2 class="font-display text-2xl">Los 9 aspectos</h2>' +
+      '<p class="text-sm text-ink-muted mt-1 mb-5">Todas las menciones del periodo, lleguen o no a una tarjeta, y el motivo cuando no llegan.</p>' +
+      filas +
+      '<div class="mt-4 pt-3 border-t border-hairline flex flex-wrap justify-end gap-4 text-xs text-ink-muted">' +
+        '<span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-theme-forest"></span>Positivas</span>' +
+        '<span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-ink/20"></span>Neutras o mixtas</span>' +
+        '<span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-ambar"></span>Negativas</span></div>' +
+      '</section>';
+  }
+
+  const api = { htmlFranjaAspectos: htmlFranjaAspectos, htmlDetalleAspectos: htmlDetalleAspectos, escHtml: escHtml };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.AspectosVista = api;
 })(typeof window !== 'undefined' ? window : globalThis);
