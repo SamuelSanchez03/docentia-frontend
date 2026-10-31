@@ -2,7 +2,9 @@
  * Capa de acceso a datos. Las tres fuentes exponen EXACTAMENTE la misma interfaz:
  *   listarEscuelas()                 -> [{escuela_id, nombre, n_reviews}]
  *   listarProfesores(escuelaId)      -> [{profesor_id, nombre, departamento, n_reviews}]
- *   cargarContextoProfesor(profId)   -> {profesor, escuela, departamento, reviews, materias, reviewsDepto}
+ *   cargarContextoProfesor(profId)   -> {profesor, escuela, departamento, reviews, materias, reviewsDepto, modelo, aspectos}
+ *     modelo   = fila más reciente de modelo_version (o null si no hay)
+ *     aspectos = filas de review_aspecto del profesor para esa versión ([] si no hay modelo)
  * La vista solo usa `fuente`; para cambiar de local a Supabase basta con editar CONFIG.FUENTE.
  * Requiere: PapaParse (solo para la fuente "local").
  */
@@ -110,7 +112,8 @@ const FuenteLocal = (() => {
       return {
         profesor, escuela, departamento, materias,
         reviews: t.rev.filter((r) => r.profesor_id === profesor.profesor_id),
-        reviewsDepto: t.rev.filter((r) => idsDepto.has(r.profesor_id))
+        reviewsDepto: t.rev.filter((r) => idsDepto.has(r.profesor_id)),
+        modelo: null, aspectos: []   // la fuente local no tiene tablas de NLP: la página muestra los recuadros fantasma
       };
     }
   };
@@ -136,6 +139,21 @@ const FuenteSupabase = (() => {
     }
     return filas;
   }
+  /* Modelo activo y aspectos (NLP). Si estas tablas fallan (sin permisos, sin crear, sin filas) la página NO se cae:
+   * se registra un aviso y se muestran los recuadros fantasma de siempre. */
+  async function cargarAspectos(reviewsProfesor) {
+    try {
+      const [modelo] = await pedir("modelo_version", "select=*&order=fecha.desc&limit=1");   // versión activa = la más reciente
+      if (!modelo || !reviewsProfesor.length) return { modelo: modelo || null, aspectos: [] };
+      const ids = reviewsProfesor.map((r) => r.review_id).join(",");
+      const aspectos = await pedir("review_aspecto",
+        `select=review_id,aspecto,polaridad,evidencia&version_modelo=eq.${encodeURIComponent(modelo.version_modelo)}&review_id=in.(${ids})`);
+      return { modelo, aspectos };
+    } catch (e) {
+      console.warn("No se pudieron cargar los aspectos (NLP):", e.message);
+      return { modelo: null, aspectos: [] };
+    }
+  }
   return {
     async listarEscuelas() {
       return (await pedir("escuela", "select=escuela_id,nombre&order=nombre")).map((e) => ({ ...e, n_reviews: null }));
@@ -158,11 +176,14 @@ const FuenteSupabase = (() => {
       const cols = "review_id,profesor_id,materia_id,post_date,is_online,student_star,student_difficult,asistencia,para_creditos,volveria_a_tomar,calificacion,help_useful,comentario";
       const todas = (await pedir("review", `select=${cols}&profesor_id=in.(${ids})&order=review_id`)).map(tipificarReview);
       const mats = await pedir("materia", `select=materia_id,codigo&escuela_id=eq.${profesor.escuela_id}`);
+      const reviewsProf = todas.filter((r) => r.profesor_id === profesor.profesor_id);
+      const { modelo, aspectos } = await cargarAspectos(reviewsProf);
       return {
         profesor, escuela, departamento,
         materias: Object.fromEntries(mats.map((m) => [m.materia_id, m.codigo])),
-        reviews: todas.filter((r) => r.profesor_id === profesor.profesor_id),
-        reviewsDepto: todas
+        reviews: reviewsProf,
+        reviewsDepto: todas,
+        modelo, aspectos
       };
     }
   };
@@ -170,7 +191,8 @@ const FuenteSupabase = (() => {
 
 /* ===================== FUENTE API PROPIA (Vercel, PLACEHOLDER) ===================== */
 /* Para la fase de hosteo: funciones en /api que consultan Supabase con una clave de servidor
- * (guardada como variable de entorno) y devuelven este mismo JSON. */
+ * (guardada como variable de entorno) y devuelven este mismo JSON (incluidos `modelo` y `aspectos`;
+ * si faltan, la página muestra los recuadros fantasma). */
 const FuenteApi = {
   async _get(ruta) {
     const r = await fetch(CONFIG.API_BASE + ruta);

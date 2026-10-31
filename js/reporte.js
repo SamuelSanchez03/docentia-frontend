@@ -1,7 +1,7 @@
 /* js/reporte.js
  * Funciones puras: reciben el contexto de datos (ver datos.js) y devuelven el reporte del profesor.
  * No tocan el DOM ni la red, por eso funcionan igual con CSV locales o con Supabase.
- * El análisis de aspectos (NLP) NO está aquí: queda pendiente hasta tener el modelo.
+ * El análisis de aspectos (NLP) vive en aspectos_logica.js (Aspectos.calcularAspectos); aquí solo se invoca.
  */
 const ORDEN_CALIFICACIONES = ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"];
 const ETIQUETAS_FLAGS = {
@@ -96,7 +96,7 @@ function comparativoDepto(reviewsDepto) {
 }
 
 function seleccionarCitas(reviews, materias) {
-  // Sin NLP todavía: se muestran ejemplos reales según la estrella, no según aspectos.
+  // Ejemplos reales según la estrella (no según aspectos); los aspectos y sus citas salen de Aspectos.calcularAspectos.
   const conTexto = reviews.filter((r) => r.comentario.trim() !== "" && r.student_star !== null);
   const orden = (a, b) => (b.help_useful || 0) - (a.help_useful || 0) || (b.post_date || "").localeCompare(a.post_date || "");
   const altas = conTexto.filter((r) => r.student_star >= 4).sort(orden).slice(0, 2);
@@ -136,7 +136,9 @@ function calcularReporte(ctx) {
     materias: porMateria(reviews, materias),
     calificaciones: porCalificacion(reviews),
     ...tagsDelProfesor(profesor),
-    citas: seleccionarCitas(reviews, materias)
+    citas: seleccionarCitas(reviews, materias),
+    // Fortalezas / oportunidades (ABSA). `typeof` evita romper este archivo cuando se usa desde Node sin cargar aspectos_logica.js.
+    aspectos: (typeof Aspectos !== "undefined") ? Aspectos.calcularAspectos(reviews, ctx.aspectos, ctx.modelo) : null
   };
 }
 

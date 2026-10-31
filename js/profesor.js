@@ -1,6 +1,7 @@
 /* js/profesor.js
  * Pinta la vista del profesor. Requiere (en este orden): PapaParse, Chart.js,
- * js/datos.js, js/reporte.js y luego este archivo. Espera los ids definidos en profesor.html.
+ * js/datos.js, js/reporte.js, js/catalogo.js, js/aspectos_logica.js, js/aspectos_vista.js y luego este archivo.
+ * Espera los ids definidos en index.html.
  */
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -111,9 +112,10 @@ function htmlCitas(rep) {
     <blockquote class="leading-relaxed">“${esc(c.texto)}”</blockquote>
     <figcaption class="text-sm text-ink-muted mt-1">${esc(c.grupo)} · ${f1(c.estrellas)} de 5${c.fecha ? " · " + esc(c.fecha) : ""}${c.materia ? " · " + esc(c.materia) : ""}</figcaption>
   </figure>`).join("");
-  return marco("Comentarios de ejemplo", "Textos originales en inglés, sin traducir. Elegidos por su puntuación, no por tema (el análisis por tema llegará con el modelo).", items);
+  return marco("Comentarios de ejemplo", "Textos originales en inglés, sin traducir. Elegidos por su puntuación, no por tema; el análisis por tema está en «Lo que funciona» y «Qué conviene mejorar».", items);
 }
 
+/* Recuadros fantasma: solo se muestran cuando no hay modelo/aspectos (estado «sin_modelo» o sin permisos de lectura). */
 function htmlFranjaNlp() {
   const fantasma = (titulo, color, texto) => `<section class="rounded-[40px] border-2 border-dashed border-hairline p-8">
     <h2 class="font-display text-3xl ${color}">${titulo}</h2>
@@ -125,6 +127,12 @@ function htmlFranjaNlp() {
     ${fantasma("Lo que funciona", "text-theme-forest", "Tres fortalezas con su evidencia, extraídas de los comentarios. Disponible cuando el modelo esté listo.")}
     ${fantasma("Qué conviene mejorar", "text-ambar", "Tres áreas de oportunidad con una cita real y una acción sugerida. Disponible cuando el modelo esté listo.")}
   </div>`;
+}
+
+/* Franja de aspectos (ABSA): tarjetas reales si hay modelo; si no, los recuadros fantasma. */
+function htmlFranjaAspectos(rep) {
+  const html = (window.AspectosVista && AspectosVista.htmlFranjaAspectos(rep.aspectos)) || null;
+  return html || htmlFranjaNlp();
 }
 
 const VISTAS = {
@@ -165,7 +173,7 @@ function mostrarReporte(ctx, rep) {
     cont.innerHTML = cabecera(ctx, rep, false);
     return;
   }
-  cont.innerHTML = cabecera(ctx, rep, true) + htmlFranjaNlp() + `<div id="paneles" class="grid grid-cols-1 lg:grid-cols-2 gap-6"></div>`;
+  cont.innerHTML = cabecera(ctx, rep, true) + htmlFranjaAspectos(rep) + `<div id="paneles" class="grid grid-cols-1 lg:grid-cols-2 gap-6"></div>`;
   montarPaneles(rep);
 }
 
